@@ -1,0 +1,74 @@
+# Project Acceptance Rubric · 專案驗收評估
+name: project-acceptance
+version: 1.0.0
+description: >
+  Verifies project completeness before acceptance: functionality,
+  documentation, testing, deployment readiness, and maintainability.
+category: project
+
+criteria:
+  - id: functionality
+    title: Functionality Complete · 功能完整性
+    weight: 1.5
+    threshold: 0.9
+    checklist:
+      - All specified features are implemented
+      - Acceptance criteria from spec are met
+      - No known critical bugs
+      - Error states are handled gracefully
+
+  - id: documentation
+    title: Documentation · 文件完整性
+    weight: 1.0
+    threshold: 0.7
+    checklist:
+      - README covers setup and usage
+      - API endpoints documented (if applicable)
+      - Architecture decisions recorded
+      - CHANGELOG is up to date
+      - LICENSE file exists
+
+  - id: testing
+    title: Test Coverage · 測試覆蓋
+    weight: 1.2
+    threshold: 0.7
+    checklist:
+      - Unit tests pass
+      - Integration tests pass
+      - Edge cases are covered
+      - Test coverage meets project standard (if defined)
+
+  - id: deployment
+    title: Deployment Ready · 部署就緒
+    weight: 1.0
+    threshold: 0.7
+    checklist:
+      - CI/CD pipeline is configured and passing
+      - Environment variables documented (.env.template)
+      - Dockerfile/compose works (if applicable)
+      - Secrets are not committed to repo
+      - Production configuration documented
+
+  - id: maintainability
+    title: Handoff Ready · 可交接性
+    weight: 0.8
+    threshold: 0.6
+    checklist:
+      - Code is reviewable by a new team member
+      - Technical debt is documented (known limitations)
+      - Future roadmap/suggestions are noted
+      - Dependencies are pinned/locked
+
+scoring:
+  method: weighted_average
+  scale: [0, 1]
+  pass_threshold: 0.80
+
+report:
+  format: markdown + json
+  include:
+    - per_criterion_scores
+    - overall_score
+    - pass_fail_summary
+    - blocking_issues
+    - recommendations

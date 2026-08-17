@@ -1,0 +1,82 @@
+# Code Quality Rubric · 程式碼品質評估
+name: code-quality
+version: 1.0.0
+description: >
+  Evaluates code quality across readability, maintainability, error handling,
+  testing, performance, and consistency. Suitable for PR review and
+  pre-merge acceptance checks.
+category: code
+
+criteria:
+  - id: readability
+    title: Readability & Naming · 可讀性與命名
+    weight: 1.0
+    threshold: 0.7
+    checklist:
+      - Variable/function names are descriptive and follow conventions
+      - Functions are concise (single responsibility)
+      - Complex logic has explanatory comments
+      - Consistent formatting (indentation, spacing, line length)
+
+  - id: maintainability
+    title: Maintainability · 可維護性
+    weight: 1.2
+    threshold: 0.7
+    checklist:
+      - No obvious code duplication (DRY)
+      - Dependencies are properly injected or parameterized
+      - Module boundaries are clean (separation of concerns)
+      - Magic numbers/strings extracted to named constants
+
+  - id: error-handling
+    title: Error Handling · 錯誤處理
+    weight: 1.1
+    threshold: 0.7
+    checklist:
+      - Edge cases are handled (null, empty, boundary values)
+      - Exceptions are caught at appropriate granularity
+      - Error messages are actionable and user-friendly
+      - Resources are properly cleaned up (finally/context managers)
+
+  - id: testing
+    title: Testing · 測試覆蓋
+    weight: 1.0
+    threshold: 0.6
+    checklist:
+      - Happy path is tested
+      - Edge cases and error paths are tested
+      - Tests are deterministic (no flaky tests)
+      - Test names describe behavior, not implementation
+
+  - id: performance
+    title: Performance · 效能
+    weight: 0.8
+    threshold: 0.6
+    checklist:
+      - No obvious O(n²) where O(n) is possible
+      - Database/API calls are batched or cached where appropriate
+      - Large data structures are not copied unnecessarily
+      - Async/parallel processing used where beneficial
+
+  - id: consistency
+    title: Style Consistency · 風格一致性
+    weight: 0.9
+    threshold: 0.8
+    checklist:
+      - Follows project's existing code style
+      - Import ordering is consistent
+      - File organization matches project conventions
+      - No dead code or commented-out blocks
+
+scoring:
+  method: weighted_average
+  scale: [0, 1]
+  pass_threshold: 0.75
+
+report:
+  format: markdown + json
+  include:
+    - per_criterion_scores
+    - overall_score
+    - pass_fail_summary
+    - recommendations

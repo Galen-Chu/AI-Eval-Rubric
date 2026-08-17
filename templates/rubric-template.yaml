@@ -1,0 +1,41 @@
+# Custom Rubric Template · 自訂評估規格模板
+# Copy this file, rename, and customize for your evaluation needs.
+
+name: my-custom-rubric
+version: 1.0.0
+description: >
+  One-paragraph description of what this rubric evaluates and when to use it.
+category: code  # code | project | api | docs | security
+
+criteria:
+  - id: criterion-one
+    title: Criterion One Title
+    weight: 1.0          # Higher weight = more important in overall score
+    threshold: 0.7       # Minimum score for this criterion to "pass"
+    checklist:
+      - "Specific, verifiable check point 1"
+      - "Specific, verifiable check point 2"
+      - "Add more as needed"
+
+  - id: criterion-two
+    title: Criterion Two Title
+    weight: 1.0
+    threshold: 0.7
+    checklist:
+      - "Check point 1"
+      - "Check point 2"
+
+# Add more criteria as needed (3-7 is typical)
+
+scoring:
+  method: weighted_average  # weighted_average | pass_fail | points
+  scale: [0, 1]             # Score range
+  pass_threshold: 0.75      # Overall threshold for pass/fail
+
+report:
+  format: markdown + json   # Output format(s)
+  include:
+    - per_criterion_scores
+    - overall_score
+    - pass_fail_summary
+    - recommendations

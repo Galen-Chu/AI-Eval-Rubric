@@ -1,0 +1,61 @@
+# Documentation Rubric · 文件品質評估
+name: documentation
+version: 1.0.0
+description: >
+  Evaluates documentation quality: completeness, accuracy, clarity,
+  and discoverability.
+category: docs
+
+criteria:
+  - id: completeness
+    title: Completeness · 完整性
+    weight: 1.2
+    threshold: 0.7
+    checklist:
+      - All major features documented
+      - Setup/installation instructions present
+      - Usage examples provided
+      - Known limitations noted
+
+  - id: accuracy
+    title: Accuracy · 準確性
+    weight: 1.3
+    threshold: 0.8
+    checklist:
+      - Code examples actually work
+      - API docs match actual endpoints
+      - Version numbers are current
+      - No outdated references to removed features
+
+  - id: clarity
+    title: Clarity · 清晰度
+    weight: 1.0
+    threshold: 0.7
+    checklist:
+      - Language is clear and concise
+      - Jargon is explained or linked
+      - Structure is logical (easy to scan)
+      - Visual aids used where helpful
+
+  - id: discoverability
+    title: Discoverability · 可發現性
+    weight: 0.8
+    threshold: 0.6
+    checklist:
+      - Table of contents or index present
+      - Cross-links between related sections
+      - Search-friendly headings
+      - README links to detailed docs
+
+scoring:
+  method: weighted_average
+  scale: [0, 1]
+  pass_threshold: 0.75
+
+report:
+  format: markdown
+  include:
+    - per_criterion_scores
+    - overall_score
+    - missing_sections
+    - outdated_references

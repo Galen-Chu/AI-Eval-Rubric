@@ -1,0 +1,72 @@
+# Security Checklist Rubric · 安全合規評估
+name: security-checklist
+version: 1.0.0
+description: >
+  Security compliance evaluation covering authentication, secrets management,
+  input validation, dependency safety, and access control.
+category: security
+
+criteria:
+  - id: secrets
+    title: Secrets Management · 金鑰管理
+    weight: 1.5
+    threshold: 0.9
+    checklist:
+      - No API keys/tokens/passwords committed to repo
+      - .gitignore covers .env and credential files
+      - Secrets stored in environment or vault
+      - .env.template provided (without real values)
+
+  - id: authentication
+    title: Authentication · 認證
+    weight: 1.3
+    threshold: 0.8
+    checklist:
+      - Default auth is deny-all (not allow-all)
+      - Session/token expiration configured
+      - Password hashing (bcrypt/argon2, not MD5/SHA1)
+      - CSRF protection enabled
+
+  - id: input-validation
+    title: Input Validation · 輸入驗證
+    weight: 1.2
+    threshold: 0.8
+    checklist:
+      - All user input validated server-side
+      - SQL injection prevented (ORM/parameterized queries)
+      - XSS prevented (output encoding/escaping)
+      - File upload validated (type/size)
+      - Path traversal prevented
+
+  - id: dependencies
+    title: Dependency Safety · 依賴安全
+    weight: 1.0
+    threshold: 0.7
+    checklist:
+      - Dependencies pinned to specific versions
+      - No known vulnerable packages (npm audit/pip audit/safety)
+      - Unused dependencies removed
+      - Lock file committed
+
+  - id: access-control
+    title: Access Control · 存取控制
+    weight: 1.1
+    threshold: 0.8
+    checklist:
+      - Authorization checked per-resource (not just endpoint)
+      - Object-level permissions (owner-only edit/delete)
+      - Admin routes protected separately
+      - Rate limiting on sensitive endpoints
+
+scoring:
+  method: pass_fail
+  scale: [0, 1]
+  pass_threshold: 0.90
+
+report:
+  format: markdown + json
+  include:
+    - per_criterion_scores
+    - security_flags
+    - blocking_issues
+    - remediation_steps

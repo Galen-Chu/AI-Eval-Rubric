@@ -36,7 +36,6 @@ Scored Report (JSON/MD)
 ---
 
 ## 📁 Structure · 結構
-
 ```
 AI-Eval-Rubric/
 ├── rubrics/                      # Pre-built evaluation rubrics

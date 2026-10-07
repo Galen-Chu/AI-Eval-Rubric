@@ -16,7 +16,7 @@ Usage:
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -27,6 +27,22 @@ except ImportError:
 
 ROOT = Path(__file__).parent.parent
 RUBRICS_DIR = ROOT / "rubrics"
+
+
+def _force_utf8_stdio():
+    """Pin stdio to UTF-8.
+
+    Windows pipes and redirected files default to the legacy ANSI code page
+    (e.g. cp950), which cannot encode characters that appear in rubric text
+    such as '²' (O(n²)) — printing the prompt crashed with UnicodeEncodeError.
+    Reconfigure is skipped when the stream does not support it.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8")
+            except (ValueError, OSError):
+                pass
 
 
 def load_rubric(rubric_path: str) -> dict:
@@ -116,7 +132,7 @@ the target and produce a scored report.
 ## Output format (JSON):
 {{
   "rubric": "{name}",
-  "timestamp": "{datetime.utcnow().isoformat()}",
+  "timestamp": "{datetime.now(timezone.utc).isoformat()}",
   "criteria_scores": [
     {{
       "id": "criterion-id",
@@ -140,6 +156,7 @@ the target and produce a scored report.
 
 
 def main():
+    _force_utf8_stdio()
     parser = argparse.ArgumentParser(description="AI-Eval-Rubric Runner")
     parser.add_argument("--rubric", type=str, help="Path to rubric YAML")
     parser.add_argument("--target", type=str, help="Path to target being evaluated")

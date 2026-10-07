@@ -14,7 +14,6 @@ Usage:
     python runner/eval_runner.py --list
 """
 import argparse
-import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +26,8 @@ except ImportError:
 
 ROOT = Path(__file__).parent.parent
 RUBRICS_DIR = ROOT / "rubrics"
+
+VALID_SCORING_METHODS = {"weighted_average", "pass_fail", "points"}
 
 
 def _force_utf8_stdio():
@@ -45,22 +46,92 @@ def _force_utf8_stdio():
                 pass
 
 
+def _in_unit_range(value) -> bool:
+    """True when value is a number (not bool) within [0.0, 1.0]."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return 0.0 <= value <= 1.0
+
+
+def _validate_rubric(rubric):
+    """Collect every schema problem as a single readable ValueError."""
+    errors = []
+
+    for key in ("name", "criteria", "scoring"):
+        if key not in rubric:
+            errors.append(f"missing required key: '{key}'")
+    if errors:
+        return errors  # nothing else can be checked reliably
+
+    criteria = rubric["criteria"]
+    if not isinstance(criteria, list) or not criteria:
+        errors.append("'criteria' must be a non-empty list")
+        criteria = []
+
+    seen_ids = set()
+    for idx, criterion in enumerate(criteria, 1):
+        where = f"criterion {idx}"
+        if not isinstance(criterion, dict):
+            errors.append(f"{where}: must be a mapping, got {type(criterion).__name__}")
+            continue
+        cid = criterion.get("id")
+        if cid:
+            where = f"criterion {idx} ({cid!r})"
+            if cid in seen_ids:
+                errors.append(f"{where}: duplicate id (already used above)")
+            seen_ids.add(cid)
+        else:
+            errors.append(f"{where}: missing required field 'id'")
+
+        for field in ("title", "weight"):
+            if field not in criterion:
+                errors.append(f"{where}: missing required field {field!r}")
+        if "weight" in criterion:
+            weight = criterion["weight"]
+            if isinstance(weight, bool) or not isinstance(weight, (int, float)) or weight <= 0:
+                errors.append(f"{where}: 'weight' must be a positive number, got {weight!r}")
+        if "threshold" in criterion and not _in_unit_range(criterion["threshold"]):
+            errors.append(f"{where}: 'threshold' must be a number in [0.0, 1.0], "
+                          f"got {criterion['threshold']!r}")
+        if "checklist" in criterion:
+            checklist = criterion["checklist"]
+            if not isinstance(checklist, list) or not all(isinstance(c, str) for c in checklist):
+                errors.append(f"{where}: 'checklist' must be a list of strings")
+
+    scoring = rubric["scoring"]
+    if not isinstance(scoring, dict):
+        errors.append(f"'scoring' must be a mapping, got {type(scoring).__name__}")
+    else:
+        method = scoring.get("method", "weighted_average")
+        if method not in VALID_SCORING_METHODS:
+            errors.append(f"'scoring.method' must be one of "
+                          f"{sorted(VALID_SCORING_METHODS)}, got {method!r}")
+        if "pass_threshold" in scoring and not _in_unit_range(scoring["pass_threshold"]):
+            errors.append(f"'scoring.pass_threshold' must be a number in [0.0, 1.0], "
+                          f"got {scoring['pass_threshold']!r}")
+
+    return errors
+
+
 def load_rubric(rubric_path: str) -> dict:
     """Load and validate a rubric YAML file."""
     path = Path(rubric_path)
     if not path.exists():
         raise FileNotFoundError(f"Rubric not found: {path}")
 
-    with open(path, encoding="utf-8") as f:
-        rubric = yaml.safe_load(f)
+    try:
+        with open(path, encoding="utf-8") as f:
+            rubric = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        raise ValueError(f"Invalid YAML in {path}:\n{e}") from e
 
-    required_keys = ["name", "criteria", "scoring"]
-    for key in required_keys:
-        if key not in rubric:
-            raise ValueError(f"Rubric missing required key: {key}")
+    if not isinstance(rubric, dict):
+        raise ValueError(f"Invalid rubric {path}: expected a YAML mapping, "
+                         f"got {type(rubric).__name__}")
 
-    if not rubric["criteria"]:
-        raise ValueError("Rubric has no criteria")
+    errors = _validate_rubric(rubric)
+    if errors:
+        raise ValueError(f"Invalid rubric {path}:\n  - " + "\n  - ".join(errors))
 
     return rubric
 
@@ -71,7 +142,7 @@ def list_rubrics() -> list:
     if not RUBRICS_DIR.exists():
         return rubrics
 
-    for filepath in sorted(RUBRICS_DIR.glob("*.yaml")):
+    for filepath in sorted(RUBRICS_DIR.glob("*.y*ml")):
         try:
             rubric = yaml.safe_load(filepath.read_text(encoding="utf-8"))
             rubrics.append({
@@ -99,7 +170,10 @@ def generate_eval_prompt(rubric: dict, target_path: str) -> str:
     criteria_text = ""
 
     for i, criterion in enumerate(rubric["criteria"], 1):
-        criteria_text += f"\n### {i}. {criterion['title']} (weight: {criterion['weight']})\n"
+        criteria_text += (
+            f"\n### {i}. {criterion['title']} "
+            f"(id: {criterion['id']}, weight: {criterion['weight']})\n"
+        )
         criteria_text += f"Threshold: {criterion.get('threshold', 0.7)}\n"
         for check in criterion.get("checklist", []):
             criteria_text += f"- [ ] {check}\n"
@@ -182,7 +256,7 @@ def main():
     try:
         rubric = load_rubric(args.rubric)
     except (FileNotFoundError, ValueError) as e:
-        print(f"  Error: {e}")
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     target = args.target or "current directory"

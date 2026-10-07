@@ -56,6 +56,7 @@ AI-Eval-Rubric/
 ├── .github/workflows/ci.yml    # CI (pytest on Ubuntu + Windows)
 ├── requirements.txt             # Runtime deps (PyYAML)
 ├── requirements-dev.txt         # Dev deps (pytest)
+├── CHANGELOG.md                 # Notable changes per release
 ├── README.md
 └── LICENSE
 ```
@@ -178,6 +179,44 @@ The overall score is always the weighted average of criterion scores.
 | `api-review` | api | 5 | API design & consistency check |
 | `documentation` | docs | 4 | Documentation quality |
 | `security-checklist` | security | 5 | Security compliance scan |
+
+---
+
+## ⚠️ Known Limitations · 已知限制
+
+- **Prompt generation only** — the runner prepares the evaluation prompt;
+  scoring is done by the LLM the prompt is piped to. The runner does not
+  execute the evaluation, collect results, or verify that returned scores
+  respect the rubric's math (see Roadmap).
+- **Bounded target snapshot** — a single file contributes at most 10,000
+  characters of content (binaries omitted); a directory contributes a
+  listing capped at 200 entries with `.git`/`node_modules`-style
+  directories pruned. Large targets are truncated, and directory targets
+  contribute file names and sizes only, not contents.
+- **Dependency ranges, not exact pins** — requirements use bounded ranges
+  (`pyyaml>=6.0.1,<7`) by design so consumers resolve compatible wheels;
+  applications embedding this runner should pin exactly in their own lockfile.
+
+## 🧩 Design Decisions · 設計決策
+
+- **Prompt on stdout, hints on stderr** — stdout stays pipeable to an LLM
+  CLI in every mode; all human-facing chatter goes to stderr.
+- **Forced UTF-8 stdio** — rubric text contains characters outside legacy
+  Windows code pages (e.g. `²`), so the runner pins stdio to UTF-8 rather
+  than depending on console settings.
+- **Aggregated validation errors** — a malformed rubric reports every
+  problem in one message instead of failing on the first.
+- **Bounded context over full reads** — caps and directory pruning keep the
+  prompt size predictable regardless of target size.
+
+## 🗺️ Roadmap · 未來方向
+
+- Post-processing of assessor output: validate returned JSON, check score
+  bounds, and recompute the weighted average for consistency
+- A `--collect` mode that captures the LLM's JSON reply and writes the
+  JSON/markdown report files itself
+- A machine-readable rubric schema (JSON Schema) for editor support
+- Coverage gate in CI (`pytest-cov --cov-fail-under`)
 
 ---
 

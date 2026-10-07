@@ -7,7 +7,10 @@ to assess a target (code, docs, API, project) against the rubric criteria.
 The runner handles:
 - Rubric loading and validation
 - Generating the evaluation prompt (rubric + target context)
-- Collecting and formatting results
+- Defining the JSON report format the assessor must return
+
+Scoring itself is performed by the LLM the prompt is piped to; the runner
+collects no results.
 
 Usage:
     python runner/eval_runner.py --rubric rubrics/code-quality.yaml --target ./src/

@@ -1,5 +1,7 @@
 # 📏 AI-Eval-Rubric
 
+[![CI](https://github.com/Galen-Chu/AI-Eval-Rubric/actions/workflows/ci.yml/badge.svg)](https://github.com/Galen-Chu/AI-Eval-Rubric/actions/workflows/ci.yml)
+
 > Structured evaluation rubrics and acceptance workflows for software
 > development processes and project deliverables.
 
@@ -49,6 +51,11 @@ AI-Eval-Rubric/
 │   └── rubric-template.yaml     # Template for custom rubrics
 ├── runner/
 │   └── eval_runner.py           # CLI evaluation runner
+├── tests/
+│   └── test_eval_runner.py      # Pytest suite for the runner
+├── .github/workflows/ci.yml    # CI (pytest on Ubuntu + Windows)
+├── requirements.txt             # Runtime deps (PyYAML)
+├── requirements-dev.txt         # Dev deps (pytest)
 ├── README.md
 └── LICENSE
 ```
@@ -63,6 +70,25 @@ AI-Eval-Rubric/
 python runner/eval_runner.py --rubric rubrics/code-quality.yaml --target ./src/
 ```
 
+The runner prints the evaluation **prompt to stdout** (summary and hints go
+to stderr), so it is pipe-friendly on any platform — output is always UTF-8:
+
+```bash
+# bash
+claude -p "$(python runner/eval_runner.py --rubric rubrics/code-quality.yaml --prompt-only --target ./src/)"
+```
+
+```powershell
+# PowerShell
+claude -p (python runner/eval_runner.py --rubric rubrics/code-quality.yaml --prompt-only --target ./src/)
+```
+
+The prompt embeds a snapshot of the target: a single file contributes its
+content (capped at 10,000 chars; binaries are omitted), a directory
+contributes a recursive file listing (capped at 200 entries, with
+`.git`/`node_modules`/`__pycache__`-style directories pruned). Pass
+`--no-context` to omit it and supply the material yourself.
+
 ### List available rubrics
 
 ```bash
@@ -75,6 +101,13 @@ python runner/eval_runner.py --list
 cp templates/rubric-template.yaml rubrics/my-rubric.yaml
 # Edit criteria, weights, thresholds
 python runner/eval_runner.py --rubric rubrics/my-rubric.yaml --target ./my-project/
+```
+
+### Run the tests
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest -v
 ```
 
 ---
@@ -112,6 +145,28 @@ report:
     - recommendations
 ```
 
+### Validation · 驗證規則
+
+`load_rubric` rejects a rubric with one aggregated, readable error listing
+every problem:
+
+- Top level must be a mapping containing `name`, `criteria`, `scoring`
+- Each criterion requires `id`, `title`, `weight`; ids must be unique
+- `weight` must be a positive number; `threshold` and
+  `scoring.pass_threshold` must lie in `[0.0, 1.0]`
+- `scoring.method` must be one of the values below; `checklist` items
+  must be strings
+
+### Scoring methods · 計分方式
+
+| Method | Checklist scoring | Per-criterion score |
+|--------|-------------------|---------------------|
+| `weighted_average` | 0 / 0.5 / 1 per item (partial credit) | Average of item scores |
+| `pass_fail` | 1.0 (pass) or 0.0 (fail), no partial credit | Fraction of items passed |
+| `points` | 0..max(scale) points per item, normalized to 0–1 | Normalized average |
+
+The overall score is always the weighted average of criterion scores.
+
 ---
 
 ## 🔄 Available Rubrics · 現有評估規格
@@ -134,7 +189,8 @@ report:
 
 ```python
 # In mod-eval-report agent definition
-rubric_source: https://github.com/Galen-Chu/AI-Eval-Rubric/rubrics/{name}.yaml
+# (use the raw URL — the blob URL returns HTML, not YAML)
+rubric_source: https://raw.githubusercontent.com/Galen-Chu/AI-Eval-Rubric/main/rubrics/{name}.yaml
 ```
 
 ### With AI-Pipeline-Hook

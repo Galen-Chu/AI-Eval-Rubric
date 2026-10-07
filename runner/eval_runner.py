@@ -14,6 +14,7 @@ Usage:
     python runner/eval_runner.py --list
 """
 import argparse
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,15 @@ ROOT = Path(__file__).parent.parent
 RUBRICS_DIR = ROOT / "rubrics"
 
 VALID_SCORING_METHODS = {"weighted_average", "pass_fail", "points"}
+
+# Target-context snapshot bounds and directories never worth listing.
+IGNORED_DIR_NAMES = {
+    ".git", ".hg", ".svn", "__pycache__", "node_modules", "venv", ".venv",
+    "dist", "build", ".idea", ".vscode", ".mypy_cache", ".pytest_cache",
+    ".tox", ".eggs",
+}
+MAX_LISTED_FILES = 200
+MAX_FILE_CONTEXT_CHARS = 10_000
 
 
 def _force_utf8_stdio():
@@ -164,7 +174,88 @@ def list_rubrics() -> list:
     return rubrics
 
 
-def generate_eval_prompt(rubric: dict, target_path: str) -> str:
+def _scoring_instructions(scoring: dict) -> str:
+    """Method-specific scoring math shared by every instruction block."""
+    method = scoring.get("method", "weighted_average")
+    pass_threshold = scoring.get("pass_threshold", 0.75)
+    common = (
+        "4. A criterion passes when its score >= its threshold; "
+        f"the rubric passes when the overall score >= {pass_threshold}\n"
+        "5. List blocking issues (failed items that must be fixed) and "
+        "actionable recommendations"
+    )
+    if method == "pass_fail":
+        return (
+            "1. Score each checklist item strictly 1.0 (pass) or 0.0 (fail) — "
+            "no partial credit\n"
+            "2. Per-criterion score = fraction of its checklist items that passed\n"
+            "3. Overall score = weighted average of criterion scores "
+            "(using each weight)\n" + common
+        )
+    if method == "points":
+        top = max(scoring.get("scale", [0, 1]))
+        return (
+            f"1. Score each checklist item on a 0-{top} point scale\n"
+            f"2. Normalize each item score to 0-1 by dividing by {top}; "
+            "per-criterion score = normalized average\n"
+            "3. Overall score = weighted average of criterion scores "
+            "(using each weight)\n" + common
+        )
+    return (
+        "1. For each criterion, score each checklist item "
+        "(0 = fail, 0.5 = partial, 1 = pass)\n"
+        "2. Per-criterion score = average of its checklist item scores\n"
+        "3. Overall score = weighted average of criterion scores "
+        "(using each weight)\n" + common
+    )
+
+
+# JSON snippets emitted for each report.include entry; sections not listed
+# here fall back to a generic findings array.
+_OUTPUT_SECTION_TEMPLATES = {
+    "per_criterion_scores": (
+        '  "criteria_scores": [\n'
+        '    {\n'
+        '      "id": "<criterion id>",\n'
+        '      "title": "<title>",\n'
+        '      "score": 0.0,\n'
+        '      "weight": 1.0,\n'
+        '      "threshold": 0.7,\n'
+        '      "passed": true,\n'
+        '      "checklist_results": [\n'
+        '        {"item": "<checklist item>", "score": 1.0, "passed": true}\n'
+        '      ]\n'
+        '    }\n'
+        '  ]'
+    ),
+    "overall_score": '  "overall_score": 0.0',
+    "pass_fail_summary": '  "overall_passed": true/false',
+    "blocking_issues": '  "blocking_issues": ["<issue that must be fixed before acceptance>"]',
+    "recommendations": '  "recommendations": ["<actionable suggestion>"]',
+    "security_flags": '  "security_flags": [{"item": "<checklist item>", "severity": "high|medium|low", "detail": "<finding>"}]',
+    "remediation_steps": '  "remediation_steps": ["<ordered step to fix a finding>"]',
+    "missing_sections": '  "missing_sections": ["<expected doc section that is absent>"]',
+    "outdated_references": '  "outdated_references": [{"reference": "<stale mention>", "reason": "<why outdated>"}]',
+}
+
+
+def _format_output_sections(rubric: dict) -> str:
+    """Render the JSON output template required by the rubric's report.include."""
+    report = rubric.get("report") or {}
+    include = report.get("include") or list(_OUTPUT_SECTION_TEMPLATES)[:4]
+
+    lines = [
+        '  "rubric": "<rubric name>"',
+        '  "timestamp": "<ISO-8601 UTC>"',
+    ]
+    for section in include:
+        lines.append(_OUTPUT_SECTION_TEMPLATES.get(
+            section, f'  "{section}": ["<{section} findings>"]'
+        ))
+    return ",\n".join(lines)
+
+
+def generate_eval_prompt(rubric: dict, target_path: str, target_context: str = "") -> str:
     """Generate the evaluation prompt combining rubric and target context."""
     name = rubric["name"]
     criteria_text = ""
@@ -179,54 +270,93 @@ def generate_eval_prompt(rubric: dict, target_path: str) -> str:
             criteria_text += f"- [ ] {check}\n"
 
     scoring = rubric["scoring"]
-    pass_threshold = scoring.get("pass_threshold", 0.75)
+    context_block = f"\n## Target context:\n{target_context}\n" if target_context else ""
+    report = rubric.get("report") or {}
+    markdown_note = (
+        "\nAfter the JSON block, also render the same results as a markdown "
+        "report (summary table plus one section per criterion).\n"
+        if "markdown" in str(report.get("format", "")) else ""
+    )
 
     prompt = f"""You are an evaluation assessor. Apply the following rubric to
 the target and produce a scored report.
 
 ## Rubric: {name}
 ## Target: {target_path}
-
+{context_block}
 ## Criteria:
 {criteria_text}
-
 ## Scoring:
 - Method: {scoring.get('method', 'weighted_average')}
 - Scale: {scoring.get('scale', [0, 1])}
-- Pass threshold: {pass_threshold}
+- Pass threshold: {scoring.get('pass_threshold', 0.75)}
 
 ## Instructions:
-1. For each criterion, score each checklist item (0 = fail, 0.5 = partial, 1 = pass)
-2. Calculate per-criterion score (average of checklist items)
-3. Calculate weighted overall score
-4. Determine pass/fail per criterion and overall
-5. List any blocking issues
-6. Provide actionable recommendations
+{_scoring_instructions(scoring)}
+- Use the exact criterion id from each heading above in the JSON output
+- Judge only the material present in the target context unless more is supplied
 
 ## Output format (JSON):
 {{
-  "rubric": "{name}",
-  "timestamp": "{datetime.now(timezone.utc).isoformat()}",
-  "criteria_scores": [
-    {{
-      "id": "criterion-id",
-      "title": "title",
-      "score": 0.0,
-      "weight": 1.0,
-      "threshold": 0.7,
-      "passed": true/false,
-      "checklist_results": [
-        {{"item": "check point", "score": 1.0, "passed": true}}
-      ]
-    }}
-  ],
-  "overall_score": 0.0,
-  "overall_passed": true/false,
-  "blocking_issues": [],
-  "recommendations": []
+{_format_output_sections(rubric)}
 }}
-"""
+{markdown_note}"""
     return prompt
+
+
+def build_target_context(target_path: str) -> str:
+    """Collect a bounded snapshot of the target to embed in the prompt.
+
+    A single file contributes its (truncated) content; a directory
+    contributes a file listing with common build/VCS directories pruned.
+    A path that does not exist is treated as an opaque label the caller
+    supplies material for by other means.
+    """
+    path = Path(target_path)
+    if not path.exists():
+        return (f"(no filesystem context for '{target_path}' — evaluate "
+                "based on material supplied separately)")
+    if path.is_file():
+        return _file_context(path)
+    return _directory_context(path)
+
+
+def _file_context(path: Path) -> str:
+    size = path.stat().st_size
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError) as e:
+        return (f"Target is a single file: {path.name} ({size} bytes, "
+                f"not readable as UTF-8 text: {e})")
+    if "\x00" in text:
+        return f"Target is a single file: {path.name} ({size} bytes, binary — content omitted)"
+    if len(text) > MAX_FILE_CONTEXT_CHARS:
+        text = text[:MAX_FILE_CONTEXT_CHARS] + f"\n... [truncated {len(text) - MAX_FILE_CONTEXT_CHARS} chars]"
+    return f"Target is a single file: {path.name} ({size} bytes)\n\n```\n{text}\n```"
+
+
+def _directory_context(root: Path) -> str:
+    entries = []
+    truncated = False
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in IGNORED_DIR_NAMES)
+        for fname in sorted(filenames):
+            file_path = Path(dirpath) / fname
+            try:
+                size = file_path.stat().st_size
+            except OSError:
+                size = 0
+            entries.append(f"- {file_path.relative_to(root).as_posix()} ({size} bytes)")
+            if len(entries) >= MAX_LISTED_FILES:
+                truncated = True
+                break
+        if truncated:
+            break
+    header = (f"Target is a directory: {root} — {len(entries)} file(s) listed "
+              "(common build/VCS directories excluded)")
+    if truncated:
+        entries.append(f"... [listing truncated at {MAX_LISTED_FILES} files]")
+    return header + ":\n" + "\n".join(entries)
 
 
 def main():
@@ -236,7 +366,9 @@ def main():
     parser.add_argument("--target", type=str, help="Path to target being evaluated")
     parser.add_argument("--list", action="store_true", help="List available rubrics")
     parser.add_argument("--prompt-only", action="store_true",
-                        help="Output evaluation prompt without running")
+                        help="Print only the evaluation prompt (summary goes to stderr)")
+    parser.add_argument("--no-context", action="store_true",
+                        help="Omit target filesystem context from the prompt")
     args = parser.parse_args()
 
     if args.list:
@@ -259,23 +391,22 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    target = args.target or "current directory"
+    target = args.target or os.getcwd()
+    target_context = "" if args.no_context else build_target_context(target)
+    prompt = generate_eval_prompt(rubric, target, target_context=target_context)
 
-    if args.prompt_only:
-        prompt = generate_eval_prompt(rubric, target)
-        print(prompt)
-        return
+    print(prompt)
 
-    # Generate prompt for LLM execution
-    prompt = generate_eval_prompt(rubric, target)
-
-    print(f"\n  Rubric: {rubric['name']}")
-    print(f"  Target: {target}")
-    print(f"  Criteria: {len(rubric['criteria'])}")
-    print(f"  Pass threshold: {rubric['scoring'].get('pass_threshold', 0.75)}")
-    print(f"\n  Evaluation prompt generated ({len(prompt)} chars)")
-    print(f"  Run with --prompt-only to see the full prompt")
-    print(f"  Then pipe to Claude: claude -p \"$(python runner/eval_runner.py --rubric {args.rubric} --prompt-only --target {target})\"")
+    if not args.prompt_only:
+        print(
+            f"\nRubric: {rubric['name']} · Target: {target} · "
+            f"Criteria: {len(rubric['criteria'])} · "
+            f"Pass threshold: {rubric['scoring'].get('pass_threshold', 0.75)}\n"
+            "Pipe the prompt to an LLM CLI, e.g.:\n"
+            f'  bash:        claude -p "$(python runner/eval_runner.py --rubric {args.rubric} --prompt-only --target {target})"\n'
+            f"  PowerShell:  claude -p (python runner/eval_runner.py --rubric {args.rubric} --prompt-only --target {target})",
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":

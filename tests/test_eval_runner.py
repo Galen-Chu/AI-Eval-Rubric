@@ -39,11 +39,11 @@ def test_prompt_only_output_is_utf8_even_under_cp950():
     assert "O(n²)" in text
 
 
-def test_timestamp_in_prompt_is_timezone_aware():
+def test_output_template_has_timestamp_placeholder():
     prompt = eval_runner.generate_eval_prompt(
         eval_runner.load_rubric(str(ROOT / "rubrics" / "code-quality.yaml")), "."
     )
-    assert "+00:00" in prompt  # datetime.now(timezone.utc), not naive utcnow()
+    assert '"timestamp": "<ISO-8601 UTC>"' in prompt  # filled at evaluation time
 
 
 def test_list_finds_all_shipped_rubrics():
@@ -160,3 +160,126 @@ def test_cli_reports_invalid_rubric_cleanly(tmp_path):
 def test_valid_custom_rubric_loads(tmp_path):
     rubric = eval_runner.load_rubric(write_rubric(tmp_path, VALID_RUBRIC))
     assert rubric["name"] == "test-rubric"
+
+
+def load_prompt(rubric_file: str, target=".") -> str:
+    rubric = eval_runner.load_rubric(str(ROOT / "rubrics" / rubric_file))
+    return eval_runner.generate_eval_prompt(rubric, target)
+
+
+def test_scoring_method_pass_fail_gets_strict_instructions():
+    prompt = load_prompt("security-checklist.yaml")
+    assert "1.0 (pass) or 0.0 (fail)" in prompt
+    assert "no partial credit" in prompt
+
+
+def test_scoring_method_weighted_average_allows_partial():
+    prompt = load_prompt("code-quality.yaml")
+    assert "0.5 = partial" in prompt
+
+
+def test_scoring_method_points_uses_scale_max(tmp_path):
+    points_rubric = """\
+name: points-rubric
+criteria:
+  - id: a
+    title: A
+    weight: 1.0
+    checklist: ["x"]
+scoring:
+  method: points
+  scale: [0, 10]
+  pass_threshold: 0.7
+"""
+    rubric = eval_runner.load_rubric(write_rubric(tmp_path, points_rubric))
+    prompt = eval_runner.generate_eval_prompt(rubric, ".")
+    assert "0-10 point scale" in prompt
+    assert "dividing by 10" in prompt
+
+
+def test_report_include_drives_output_sections():
+    security = load_prompt("security-checklist.yaml")
+    assert '"security_flags"' in security
+    assert '"remediation_steps"' in security
+    assert '"blocking_issues"' in security
+    assert '"recommendations"' not in security  # not in this rubric's include
+
+    docs = load_prompt("documentation.yaml")
+    assert '"missing_sections"' in docs
+    assert '"outdated_references"' in docs
+    assert "After the JSON block, also render the same results as a markdown report" in docs
+
+
+def test_target_context_single_file_embedded_content(tmp_path):
+    target = tmp_path / "sample.py"
+    target.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    context = eval_runner.build_target_context(str(target))
+    assert "single file" in context
+    assert "return a + b" in context
+
+
+def test_target_context_file_truncated(tmp_path, monkeypatch):
+    monkeypatch.setattr(eval_runner, "MAX_FILE_CONTEXT_CHARS", 50)
+    target = tmp_path / "big.txt"
+    target.write_text("x" * 500, encoding="utf-8")
+    context = eval_runner.build_target_context(str(target))
+    assert "[truncated 450 chars]" in context
+    assert "x" * 500 not in context
+
+
+def test_target_context_binary_file_omitted(tmp_path):
+    target = tmp_path / "blob.bin"
+    target.write_bytes(b"\x00\x01\x02binary")
+    context = eval_runner.build_target_context(str(target))
+    assert "binary — content omitted" in context
+
+
+def test_target_context_directory_listing_and_ignores(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text("print('hi')", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# hi", encoding="utf-8")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "index").write_text("ignored", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "pkg.js").write_text("x", encoding="utf-8")
+
+    context = eval_runner.build_target_context(str(tmp_path))
+    assert "directory" in context
+    assert "src/main.py" in context
+    assert "README.md" in context
+    assert ".git/" not in context and "node_modules/" not in context
+
+
+def test_target_context_directory_listing_truncated(tmp_path, monkeypatch):
+    monkeypatch.setattr(eval_runner, "MAX_LISTED_FILES", 3)
+    for i in range(10):
+        (tmp_path / f"f{i}.txt").write_text("x", encoding="utf-8")
+    context = eval_runner.build_target_context(str(tmp_path))
+    assert "[listing truncated at 3 files]" in context
+
+
+def test_target_context_missing_path_is_labelled():
+    context = eval_runner.build_target_context("no/such/path")
+    assert "no filesystem context" in context
+
+
+def test_cli_no_context_flag_omits_listing(tmp_path):
+    (tmp_path / "file.txt").write_text("content", encoding="utf-8")
+    result = run_cli("--rubric", "rubrics/code-quality.yaml",
+                     "--prompt-only", "--target", str(tmp_path))
+    assert "file.txt" in result.stdout.decode("utf-8")
+
+    result = run_cli("--rubric", "rubrics/code-quality.yaml",
+                     "--prompt-only", "--no-context", "--target", str(tmp_path))
+    assert "file.txt" not in result.stdout.decode("utf-8")
+
+
+def test_cli_default_mode_prints_prompt_on_stdout_hints_on_stderr(tmp_path):
+    result = run_cli("--rubric", "rubrics/code-quality.yaml",
+                     "--target", str(tmp_path), "--no-context")
+    assert result.returncode == 0
+    stdout = result.stdout.decode("utf-8")
+    stderr = result.stderr.decode("utf-8", errors="replace")
+    assert stdout.startswith("You are an evaluation assessor")
+    assert "Pipe the prompt" in stderr
+    assert "Rubric: code-quality" in stderr
